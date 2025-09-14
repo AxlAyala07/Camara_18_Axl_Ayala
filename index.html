@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Captura de Cámara por Voz</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            text-align: center;
+        }
+        
+        video, canvas {
+            max-width: 100%;
+            border: 2px solid #ccc;
+            margin: 10px;
+        }
+        
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+            font-size: 16px;
+        }
+        
+        button:hover {
+            background-color: #0056b3;
+        }
+        
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        
+        .status.listening {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .status.stopped {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        .controls {
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Captura de Cámara por Voz</h1>
+    <p>Di "foto" para capturar una imagen</p>
+    
+    <div class="controls">
+        <button id="startBtn">Iniciar Cámara</button>
+        <button id="voiceBtn" disabled>Activar Reconocimiento de Voz</button>
+        <button id="downloadBtn" disabled>Descargar Foto</button>
+    </div>
+    
+    <div id="status" class="status stopped">
+        Estado: Cámara desactivada
+    </div>
+    
+    <div>
+        <video id="video" width="640" height="480" autoplay muted></video>
+    </div>
+    
+    <div>
+        <canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
+    </div>
+
+    <script>
+        let video = document.getElementById('video');
+        let canvas = document.getElementById('canvas');
+        let ctx = canvas.getContext('2d');
+        let stream = null;
+        let recognition = null;
+        let isListening = false;
+        
+        const startBtn = document.getElementById('startBtn');
+        const voiceBtn = document.getElementById('voiceBtn');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const status = document.getElementById('status');
+        
+        async function startCamera() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 640, height: 480 }, 
+                    audio: false 
+                });
+                video.srcObject = stream;
+                startBtn.textContent = 'Detener Cámara';
+                startBtn.onclick = stopCamera;
+                voiceBtn.disabled = false;
+                updateStatus('Cámara activada - Puedes activar el reconocimiento de voz', 'listening');
+            } catch (error) {
+                console.error('Error al acceder a la cámara:', error);
+                updateStatus('Error: No se pudo acceder a la cámara', 'stopped');
+            }
+        }
+        
+        function stopCamera() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+                video.srcObject = null;
+                startBtn.textContent = 'Iniciar Cámara';
+                startBtn.onclick = startCamera;
+                voiceBtn.disabled = true;
+                stopVoiceRecognition();
+                updateStatus('Cámara desactivada', 'stopped');
+            }
+        }
+        
+        function initVoiceRecognition() {
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                updateStatus('Error: Tu navegador no soporta reconocimiento de voz', 'stopped');
+                return false;
+            }
+            
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            
+            recognition.continuous = true;
+            recognition.interimResults = false;
+            recognition.lang = 'es-ES';
+            
+            recognition.onstart = function() {
+                isListening = true;
+                voiceBtn.textContent = 'Detener Reconocimiento';
+                voiceBtn.onclick = stopVoiceRecognition;
+                updateStatus('Escuchando... Di "foto" para capturar', 'listening');
+            };
+            
+            recognition.onresult = function(event) {
+                let transcript = '';
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    if (event.results[i].isFinal) {
+                        transcript += event.results[i][0].transcript.toLowerCase();
+                    }
+                }
+                
+                console.log('Texto reconocido:', transcript);
+                
+                if (transcript.includes('foto')) {
+                    capturePhoto();
+                    updateStatus('¡Foto capturada! Di "foto" de nuevo para otra captura', 'listening');
+                }
+            };
+            
+            recognition.onerror = function(event) {
+                console.error('Error en reconocimiento de voz:', event.error);
+                updateStatus('Error en reconocimiento de voz: ' + event.error, 'stopped');
+                stopVoiceRecognition();
+            };
+            
+            recognition.onend = function() {
+                if (isListening) {
+                    setTimeout(() => {
+                        if (isListening) {
+                            recognition.start();
+                        }
+                    }, 100);
+                }
+            };
+            
+            return true;
+        }
+        
+        function startVoiceRecognition() {
+            if (initVoiceRecognition()) {
+                try {
+                    recognition.start();
+                } catch (error) {
+                    console.error('Error al iniciar reconocimiento:', error);
+                    updateStatus('Error al iniciar reconocimiento de voz', 'stopped');
+                }
+            }
+        }
+        
+        function stopVoiceRecognition() {
+            if (recognition && isListening) {
+                isListening = false;
+                recognition.stop();
+                voiceBtn.textContent = 'Activar Reconocimiento de Voz';
+                voiceBtn.onclick = startVoiceRecognition;
+                updateStatus('Reconocimiento de voz desactivado', 'stopped');
+            }
+        }
+        
+        function capturePhoto() {
+            if (video.videoWidth === 0 || video.videoHeight === 0) {
+                updateStatus('Error: No hay video disponible para capturar', 'stopped');
+                return;
+            }
+            
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            canvas.style.display = 'block';
+            
+            downloadBtn.disabled = false;
+            
+            console.log('Foto capturada exitosamente');
+        }
+        
+        function downloadPhoto() {
+            try {
+                const link = document.createElement('a');
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                link.download = `foto_${timestamp}.png`;
+                link.href = canvas.toDataURL('image/png');
+                
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                console.log('Foto descargada');
+            } catch (error) {
+                console.error('Error al descargar:', error);
+                updateStatus('Error al descargar la foto', 'stopped');
+            }
+        }
+        
+        function updateStatus(message, type) {
+            status.textContent = `Estado: ${message}`;
+            status.className = `status ${type}`;
+        }
+        
+        startBtn.onclick = startCamera;
+        voiceBtn.onclick = startVoiceRecognition;
+        downloadBtn.onclick = downloadPhoto;
+        
+        window.onload = function() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                updateStatus('Error: Tu navegador no soporta acceso a la cámara', 'stopped');
+                startBtn.disabled = true;
+            }
+            
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                updateStatus('Advertencia: Tu navegador no soporta reconocimiento de voz', 'stopped');
+            }
+        };
+    </script>
+</body>
+</html>
